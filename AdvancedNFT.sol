@@ -76,11 +76,11 @@ contract AdvancedNFT is ERC721 {
     // Use commit reveal to allocate NFT ids randomly
     // - look at cool cats NFT to see how this is done (they use chainlink, you should use commit reveal)
     function commit() external atStage(Stages.PresaleMinting) {
-        // The block hash of this transaction will be used as the seed for the trait generation process.
+        // Commits to using block hash of this block PLUS 10
     }
 
     function reveal() external atStage(Stages.PresaleMinting) {
-        // 10 blocks ahead of the commit
+        // 10 blocks ahead of the commit gets block hash
     }
 
     function mint() external {

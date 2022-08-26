@@ -6,27 +6,23 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/structs/BitMaps.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-// import "@openzeppelin/contracts/utils/Multicall.sol";
-
 // TODO:
-// - TransferMultiple functionality
+// - Figure out how to automate transition to end of presale stage (timed?)
 
 contract AdvancedNFT is ERC721 {
     using BitMaps for BitMaps.BitMap;
     using Strings for uint256;
 
-    bytes32 public immutable merkleRoot;
-
-    address public owner;
     address[] private _contributors;
 
-    uint256 public revealBlockNumber;
-    uint256 public revealBlockHash;
-
+    bytes32 public immutable merkleRoot;
     BitMaps.BitMap private _presaleAllocations;
-    uint256 public tokenIdToMint = 0;
+    uint256 public revealBlockNumber;
+    uint256 public revealBlockhash;
+
     uint256 public PRICE = 0.05 ether;
-    uint256 public immutable TOTAL_SUPPLY_CAP = 10000;
+    uint256 public immutable TOTAL_SUPPLY_CAP = 1000;
+    uint256 public tokenIdToMint = 0;
 
     // Measure gas vs. bitmap (hardhat `REPORT_GAS=true` `npx hardhat test`)
     // mapping(address => uint256) public balances;
@@ -49,38 +45,21 @@ contract AdvancedNFT is ERC721 {
     }
 
     modifier msgValueEqualsPRICE() {
-        require(
-            msg.value == PRICE,
-            "AdvancedNFT: Insufficient transaction value"
-        );
+        require(msg.value == PRICE, "AdvancedNFT: Invalid transaction value");
         _;
     }
 
-    modifier isNotContract() {
-        require(
-            msg.sender == tx.origin,
-            "AdvancedNFT: Feature is limited to EOAs only"
-        );
-        _;
-    }
-
-    modifier onlyOwner() {
-        require(
-            msg.sender == owner,
-            "AdvancedNFT: Feature is limited to owner only"
-        );
-        _;
-    }
-
+    /**
+     * @dev
+     */
     constructor(
         string memory name,
         string memory symbol,
-        bytes32 root,
+        bytes32 merkleRoot_,
         address[] memory contributors
     ) ERC721(name, symbol) {
-        merkleRoot = root;
-        owner = msg.sender;
         _contributors = contributors;
+        merkleRoot = merkleRoot_;
     }
 
     /**
@@ -105,17 +84,20 @@ contract AdvancedNFT is ERC721 {
      * Requirements:
      *
      * - At stage `PresaleMinting`
-     * - At or beyond reveal block number
-     * - `revealBlockHash` not yet set
+     * - At or beyond `revealBlockNumber`
+     * - `revealBlockhash` not yet set
      */
     function reveal() external atStage(Stages.PresaleMinting) {
         require(
             block.number > revealBlockNumber - 1,
             "AdvancedNFT: Cannot reveal yet"
         );
-        require(revealBlockHash == 0, "AdvancedNFT: Already revealed");
+        require(revealBlockhash == 0, "AdvancedNFT: Already revealed");
 
-        revealBlockHash = uint256(blockhash(revealBlockNumber));
+        revealBlockhash = uint256(blockhash(revealBlockNumber));
+
+        // Transition from `PresaleMinting` to `Presale`
+        _nextStage();
     }
 
     /**
@@ -136,8 +118,8 @@ contract AdvancedNFT is ERC721 {
 
         string memory baseURI = _baseURI();
 
-        // Offset `metadataId`
-        uint256 metadataId = (tokenId + revealBlockHash) % TOTAL_SUPPLY_CAP;
+        // Offset `metadataId` as a function of `revealBlockhash` value
+        uint256 metadataId = (tokenId + revealBlockhash) % TOTAL_SUPPLY_CAP;
 
         return
             bytes(baseURI).length > 0
@@ -146,7 +128,8 @@ contract AdvancedNFT is ERC721 {
     }
 
     /**
-     * @dev
+     * @dev Allows users with presale tickets to mint one token per ticket,
+     * verified by their supplied `merkleProof`.
      *
      * Requirements:
      *
@@ -160,7 +143,6 @@ contract AdvancedNFT is ERC721 {
         external
         payable
         atStage(Stages.Presale)
-        isNotContract
         msgValueEqualsPRICE
     {
         require(
@@ -183,13 +165,17 @@ contract AdvancedNFT is ERC721 {
     }
 
     /**
+     * @dev After the presale, allows public to mint one token at a time.
      *
+     * Requirements:
+     *
+     * - At stage `PublicSale`
+     * - `msg.value` == `PRICE`
      */
     function publicSale()
         external
         payable
         atStage(Stages.PublicSale)
-        isNotContract
         msgValueEqualsPRICE
     {
         _mint(msg.sender, tokenIdToMint);
@@ -201,36 +187,34 @@ contract AdvancedNFT is ERC721 {
         }
     }
 
-    function transferMultiple() external {
-        // Add multicall to the NFT so people can transfer several NFTs in one transaction (make sure people can’t abuse minting!)
+    /**
+     * @dev Allows transfer of multiple tokens in a single call.
+     */
+    function transferMultiple(
+        address[] calldata from,
+        address[] calldata to,
+        uint256[] calldata tokenId
+    ) external {
+        require(
+            from.length == to.length && to.length == tokenId.length,
+            "AdvancedNFT: Invalid function arguments"
+        );
+
+        for (uint256 i; i < from.length; i++) {
+            _transfer(from[i], to[i], tokenId[i]);
+        }
     }
 
     /**
-     * @dev Withdraws contract balance to `contributors`, splitting the payout
+     * @dev Withdraws contract balance to `_contributors`, splitting the payout
      * equally.
-     *
-     * Requirements:
-     *
-     * - `msg.sender` is a contributor
-     *
-     * Note: Vulnerability here in that one malicious contributor can withdraw
-     * all funds to their own wallet.
      */
     function withdrawToContributors() external {
         uint256 payout = address(this).balance / _contributors.length;
 
         for (uint256 i; i < _contributors.length; i++) {
-            _withdrawToContributor(payable(_contributors[i]), payout);
+            payable(_contributors[i]).send(payout);
         }
-    }
-
-    /**
-     * @dev Withdraws `amount` payout to `contributor` address.
-     */
-    function _withdrawToContributor(address payable contributor, uint256 amount)
-        internal
-    {
-        payable(contributor).send(amount);
     }
 
     /**
@@ -257,11 +241,11 @@ contract AdvancedNFT is ERC721 {
      * The merkle leaf is a keccak256 hash of the address and its index in the
      * bitmap.
      */
-    function _merkleLeaf(address account, uint256 tokenId)
+    function _merkleLeaf(address account, uint256 ticketNumber)
         internal
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encodePacked(account, tokenId));
+        return keccak256(abi.encodePacked(account, ticketNumber));
     }
 }

@@ -9,17 +9,22 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 // import "@openzeppelin/contracts/utils/Multicall.sol";
 
 // TODO:
-// - TransferMultiple functionality
-// - Commit reveal for nft allocations
 // - Use OZ bitmap to handle presale purchases
+// - TransferMultiple functionality
 
 contract AdvancedNFT is ERC721 {
     using BitMaps for BitMaps.BitMap;
 
     bytes32 public immutable merkleRoot;
+
     mapping(address => bool) private _contributors;
+
+    uint256 public revealBlockNumber;
+    uint256 public metadataRandomSeed;
+
     BitMaps.BitMap private _presaleAllocations;
     uint256 public PRICE = 0.05 ether;
+    uint256 public immutable MAX_SUPPLY_CAP = 10000;
     // measure gas vs. bitmap (hardhat? REPORT_GAS=true npx hardhat test)
     // mapping(address => uint256) public balances;
 
@@ -73,19 +78,65 @@ contract AdvancedNFT is ERC721 {
         _contributors[msg.sender] = true;
     }
 
-    // Use commit reveal to allocate NFT ids randomly
-    // - look at cool cats NFT to see how this is done (they use chainlink, you should use commit reveal)
+    /**
+     * @dev Commits to basing the metadata randomization (offset) on the block
+     * hash of current block number + 10.
+     *
+     * Requirements:
+     *
+     * - At stage `PresaleMinting`
+     * - `revealBlockNumber` not yet set
+     */
     function commit() external atStage(Stages.PresaleMinting) {
-        // Commits to using block hash of this block PLUS 10
+        require(revealBlockNumber == 0, "AdvancedNFT: Already committed");
+
+        revealBlockNumber = block.number + 10;
     }
 
+    /**
+     * @dev Reveals the `metadataRandomSeed` which is used to calculate the
+     * offset of a given token id relative to its URI.
+     *
+     * Requirements:
+     *
+     * - At stage `PresaleMinting`
+     * - At or beyond reveal block number
+     * - `metadataRandomSeed` not yet set
+     */
     function reveal() external atStage(Stages.PresaleMinting) {
-        // 10 blocks ahead of the commit gets block hash
+        require(
+            block.number > revealBlockNumber - 1,
+            "AdvancedNFT: Cannot reveal yet"
+        );
+        require(metadataRandomSeed == 0, "AdvancedNFT: Already revealed");
+
+        metadataRandomSeed = blockHash(revealBlockNumber);
     }
 
-    function mint() external {
-        // ?
-        // Iterate through totalSupply starting at 0 and CHECK if each is minted - free for all
+    /**
+     * @dev Returns the URI of `tokenId` which is "randomized" by being offset
+     * within the list of token id's as a function of `metadataRandomSeed`.
+     *
+     * Requirements:
+     *
+     * - `tokenId` has been minted
+     */
+    function tokenURI(uint256 tokenId) external returns (string memory) {
+        _requireMinted(tokenId);
+
+        string memory baseURI = _baseURI();
+
+        // Offset `metadataId` as a function of the `metadataRandomSeed`
+        uint256 metadataId = (tokenId + metadataRandomSeed) % MAX_SUPPLY_CAP;
+
+        return
+            bytes(baseURI).length > 0
+                ? string(abi.encodePacked(baseURI, metadataId.toString()))
+                : "";
+    }
+
+    function mint() external msgValueEqualsPRICE {
+        // Just calculate the offset by totalSupply() here to get this assignment done...
     }
 
     /**

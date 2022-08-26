@@ -9,7 +9,6 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 // import "@openzeppelin/contracts/utils/Multicall.sol";
 
 // TODO:
-// - Use OZ bitmap to handle presale purchases
 // - TransferMultiple functionality
 
 contract AdvancedNFT is ERC721 {
@@ -18,20 +17,22 @@ contract AdvancedNFT is ERC721 {
 
     bytes32 public immutable merkleRoot;
 
-    mapping(address => bool) private _contributors;
+    address public owner;
+    address[] private _contributors;
 
     uint256 public revealBlockNumber;
-    uint256 public metadataOffset;
+    uint256 public revealBlockHash;
 
     BitMaps.BitMap private _presaleAllocations;
     uint256 public tokenIdToMint = 0;
     uint256 public PRICE = 0.05 ether;
     uint256 public immutable TOTAL_SUPPLY_CAP = 10000;
-    // measure gas vs. bitmap (hardhat? REPORT_GAS=true npx hardhat test)
+
+    // Measure gas vs. bitmap (hardhat `REPORT_GAS=true` `npx hardhat test`)
     // mapping(address => uint256) public balances;
 
     enum Stages {
-        PresaleMinting, // commit/reveal stage?
+        PresaleMinting,
         Presale,
         PublicSale,
         SupplyExhausted
@@ -63,18 +64,10 @@ contract AdvancedNFT is ERC721 {
         _;
     }
 
-    modifier msgSenderIsContributor() {
+    modifier onlyOwner() {
         require(
-            _contributors[msg.sender],
-            "AdvancedNFT: Feature is limited to contributors only"
-        );
-        _;
-    }
-
-    modifier totalSupplyCapNotExceeded() {
-        require(
-            tokenIdToMint < TOTAL_SUPPLY_CAP,
-            "AdvancedNFT: Cannot mint beyond total supply cap"
+            msg.sender == owner,
+            "AdvancedNFT: Feature is limited to owner only"
         );
         _;
     }
@@ -82,10 +75,12 @@ contract AdvancedNFT is ERC721 {
     constructor(
         string memory name,
         string memory symbol,
-        bytes32 root
+        bytes32 root,
+        address[] memory contributors
     ) ERC721(name, symbol) {
         merkleRoot = root;
-        _contributors[msg.sender] = true;
+        owner = msg.sender;
+        _contributors = contributors;
     }
 
     /**
@@ -111,23 +106,16 @@ contract AdvancedNFT is ERC721 {
      *
      * - At stage `PresaleMinting`
      * - At or beyond reveal block number
-     * - `metadataOffset` not yet set
+     * - `revealBlockHash` not yet set
      */
     function reveal() external atStage(Stages.PresaleMinting) {
         require(
             block.number > revealBlockNumber - 1,
             "AdvancedNFT: Cannot reveal yet"
         );
-        require(metadataOffset == 0, "AdvancedNFT: Already revealed");
+        require(revealBlockHash == 0, "AdvancedNFT: Already revealed");
 
-        metadataOffset =
-            uint256(blockhash(revealBlockNumber)) %
-            TOTAL_SUPPLY_CAP;
-
-        // Ensure `metadataOffset` not 0
-        if (metadataOffset == 0) {
-            metadataOffset = 1;
-        }
+        revealBlockHash = uint256(blockhash(revealBlockNumber));
     }
 
     /**
@@ -149,7 +137,7 @@ contract AdvancedNFT is ERC721 {
         string memory baseURI = _baseURI();
 
         // Offset `metadataId`
-        uint256 metadataId = tokenId + metadataOffset;
+        uint256 metadataId = (tokenId + revealBlockHash) % TOTAL_SUPPLY_CAP;
 
         return
             bytes(baseURI).length > 0
@@ -203,28 +191,18 @@ contract AdvancedNFT is ERC721 {
         atStage(Stages.PublicSale)
         isNotContract
         msgValueEqualsPRICE
-        totalSupplyCapNotExceeded
     {
         _mint(msg.sender, tokenIdToMint);
         tokenIdToMint += 1;
+
+        if (tokenIdToMint == TOTAL_SUPPLY_CAP) {
+            // Transition from `PublicSale` to `SupplyExhausted`
+            _nextStage();
+        }
     }
 
     function transferMultiple() external {
         // Add multicall to the NFT so people can transfer several NFTs in one transaction (make sure people can’t abuse minting!)
-    }
-
-    /**
-     * @dev Adds `contributor` to `_contributors`.
-     *
-     * Requirements:
-     *
-     * - - `msg.sender` is a contributor
-     */
-    function addContributor(address contributor)
-        external
-        msgSenderIsContributor
-    {
-        _contributors[contributor] = true;
     }
 
     /**
@@ -238,19 +216,11 @@ contract AdvancedNFT is ERC721 {
      * Note: Vulnerability here in that one malicious contributor can withdraw
      * all funds to their own wallet.
      */
-    function withdrawToContributors(address[] calldata contributors)
-        external
-        msgSenderIsContributor
-    {
-        uint256 payout = address(this).balance / contributors.length;
+    function withdrawToContributors() external {
+        uint256 payout = address(this).balance / _contributors.length;
 
-        for (uint256 i; i < contributors.length; i++) {
-            require(
-                _contributors[contributors[i]],
-                "AdvancedNFT: Can only withdraw to contributors"
-            );
-
-            _withdrawToContributor(payable(contributors[i]), payout);
+        for (uint256 i; i < _contributors.length; i++) {
+            _withdrawToContributor(payable(_contributors[i]), payout);
         }
     }
 

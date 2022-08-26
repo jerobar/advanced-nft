@@ -6,9 +6,6 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/structs/BitMaps.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-// TODO:
-// - Figure out how to automate transition to end of presale stage (timed?)
-
 contract AdvancedNFT is ERC721 {
     using BitMaps for BitMaps.BitMap;
     using Strings for uint256;
@@ -19,6 +16,7 @@ contract AdvancedNFT is ERC721 {
     BitMaps.BitMap private _presaleAllocations;
     uint256 public revealBlockNumber;
     uint256 public revealBlockhash;
+    uint256 public presaleEnds;
 
     uint256 public PRICE = 0.05 ether;
     uint256 public immutable TOTAL_SUPPLY_CAP = 1000;
@@ -36,6 +34,13 @@ contract AdvancedNFT is ERC721 {
 
     Stages public stage = Stages.PresaleMinting;
 
+    modifier timedTransitions() {
+        if (stage == Stages.Presale && block.timestamp > presaleEnds) {
+            _nextStage();
+        }
+        _;
+    }
+
     modifier atStage(Stages stage_) {
         require(
             stage == stage_,
@@ -50,13 +55,14 @@ contract AdvancedNFT is ERC721 {
     }
 
     /**
-     * @dev
+     * @dev Constructor calls ERC721 constructor with `name` and `symbol`, sets
+     * `_contributors` and `merkleRoot`.
      */
     constructor(
         string memory name,
         string memory symbol,
-        bytes32 merkleRoot_,
-        address[] memory contributors
+        address[] memory contributors,
+        bytes32 merkleRoot_
     ) ERC721(name, symbol) {
         _contributors = contributors;
         merkleRoot = merkleRoot_;
@@ -98,6 +104,7 @@ contract AdvancedNFT is ERC721 {
 
         // Transition from `PresaleMinting` to `Presale`
         _nextStage();
+        presaleEnds = block.timestamp + 7 days;
     }
 
     /**
@@ -142,6 +149,7 @@ contract AdvancedNFT is ERC721 {
     function presale(uint256 ticketNumber, bytes32[] calldata merkleProof)
         external
         payable
+        timedTransitions
         atStage(Stages.Presale)
         msgValueEqualsPRICE
     {

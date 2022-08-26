@@ -20,7 +20,7 @@ contract AdvancedNFT is ERC721 {
     mapping(address => bool) private _contributors;
 
     uint256 public revealBlockNumber;
-    uint256 public metadataRandomSeed;
+    uint256 public metadataOffset;
 
     BitMaps.BitMap private _presaleAllocations;
     uint256 public PRICE = 0.05 ether;
@@ -101,16 +101,21 @@ contract AdvancedNFT is ERC721 {
      *
      * - At stage `PresaleMinting`
      * - At or beyond reveal block number
-     * - `metadataRandomSeed` not yet set
+     * - `metadataOffset` not yet set
      */
     function reveal() external atStage(Stages.PresaleMinting) {
         require(
             block.number > revealBlockNumber - 1,
             "AdvancedNFT: Cannot reveal yet"
         );
-        require(metadataRandomSeed == 0, "AdvancedNFT: Already revealed");
+        require(metadataOffset == 0, "AdvancedNFT: Already revealed");
 
-        metadataRandomSeed = blockHash(revealBlockNumber);
+        metadataOffset = blockHash(revealBlockNumber) % MAX_SUPPLY_CAP;
+
+        // Ensure `metadataOffset` not 0
+        if (metadataOffset == 0) {
+            metadataOffset = 1;
+        }
     }
 
     /**
@@ -126,8 +131,8 @@ contract AdvancedNFT is ERC721 {
 
         string memory baseURI = _baseURI();
 
-        // Offset `metadataId` as a function of the `metadataRandomSeed`
-        uint256 metadataId = (tokenId + metadataRandomSeed) % MAX_SUPPLY_CAP;
+        // Offset `metadataId`
+        uint256 metadataId = tokenId + metadataOffset;
 
         return
             bytes(baseURI).length > 0

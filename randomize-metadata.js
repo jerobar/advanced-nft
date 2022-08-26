@@ -21,7 +21,9 @@ const METADATA = [
  * @returns {Array}           Metadata array offset as function of random seed.
  */
 function offsetMetadata(metadata, seed) {
-  return metadata.map((_, index) => metadata[(index + seed) % metadata.length])
+  const offset = seed % metadata.length
+
+  return metadata.map((_, index) => metadata[index + offset])
 }
 
 console.log(offsetMetadata(METADATA, 720823774))

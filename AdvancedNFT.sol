@@ -22,7 +22,7 @@ contract AdvancedNFT is ERC721 {
     uint256 public immutable TOTAL_SUPPLY_CAP = 1000;
     uint256 public tokenIdToMint = 0;
 
-    // Measure gas vs. bitmap (hardhat `REPORT_GAS=true` `npx hardhat test`)
+    // Measure gas vs. bitmap approach (hardhat `REPORT_GAS=true` `npx hardhat test`)
     // mapping(address => uint256) public balances;
 
     enum Stages {

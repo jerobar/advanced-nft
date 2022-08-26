@@ -14,6 +14,7 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 contract AdvancedNFT is ERC721 {
     using BitMaps for BitMaps.BitMap;
+    using Strings for uint256;
 
     bytes32 public immutable merkleRoot;
 
@@ -23,8 +24,9 @@ contract AdvancedNFT is ERC721 {
     uint256 public metadataOffset;
 
     BitMaps.BitMap private _presaleAllocations;
+    uint256 public tokenIdToMint = 0;
     uint256 public PRICE = 0.05 ether;
-    uint256 public immutable MAX_SUPPLY_CAP = 10000;
+    uint256 public immutable TOTAL_SUPPLY_CAP = 10000;
     // measure gas vs. bitmap (hardhat? REPORT_GAS=true npx hardhat test)
     // mapping(address => uint256) public balances;
 
@@ -65,6 +67,14 @@ contract AdvancedNFT is ERC721 {
         require(
             _contributors[msg.sender],
             "AdvancedNFT: Feature is limited to contributors only"
+        );
+        _;
+    }
+
+    modifier totalSupplyCapNotExceeded() {
+        require(
+            tokenIdToMint < TOTAL_SUPPLY_CAP,
+            "AdvancedNFT: Cannot mint beyond total supply cap"
         );
         _;
     }
@@ -110,7 +120,9 @@ contract AdvancedNFT is ERC721 {
         );
         require(metadataOffset == 0, "AdvancedNFT: Already revealed");
 
-        metadataOffset = blockHash(revealBlockNumber) % MAX_SUPPLY_CAP;
+        metadataOffset =
+            uint256(blockhash(revealBlockNumber)) %
+            TOTAL_SUPPLY_CAP;
 
         // Ensure `metadataOffset` not 0
         if (metadataOffset == 0) {
@@ -126,7 +138,12 @@ contract AdvancedNFT is ERC721 {
      *
      * - `tokenId` has been minted
      */
-    function tokenURI(uint256 tokenId) external returns (string memory) {
+    function tokenURI(uint256 tokenId)
+        public
+        view
+        override
+        returns (string memory)
+    {
         _requireMinted(tokenId);
 
         string memory baseURI = _baseURI();
@@ -140,10 +157,6 @@ contract AdvancedNFT is ERC721 {
                 : "";
     }
 
-    function mint() external msgValueEqualsPRICE {
-        // Just calculate the offset by totalSupply() here to get this assignment done...
-    }
-
     /**
      * @dev
      *
@@ -153,41 +166,47 @@ contract AdvancedNFT is ERC721 {
      * - `msg.sender` is not contract
      * - `msg.value` == `PRICE`
      * - Caller provided valid `merkleProof`
-     * - `tokenId` not already minted
+     * - `ticketNumber` not already redeemed
      */
-    function presale(uint256 tokenId, bytes32[] calldata merkleProof)
+    function presale(uint256 ticketNumber, bytes32[] calldata merkleProof)
         external
+        payable
         atStage(Stages.Presale)
         isNotContract
         msgValueEqualsPRICE
     {
         require(
-            _merkleProofVerify(merkleProof, _merkleLeaf(msg.sender, tokenId)), // tokenId == ticketNumber ?
+            _merkleProofVerify(
+                merkleProof,
+                _merkleLeaf(msg.sender, ticketNumber)
+            ),
             "AdvancedNFT: Invalid merkle proof"
         );
         require(
-            get(_presaleAllocations, tokenId),
-            "AdvancedNFT: Token already minted"
+            BitMaps.get(_presaleAllocations, ticketNumber),
+            "AdvancedNFT: Ticket number already redeemed"
         );
 
-        // Mark this `tokenId` as minted
-        set(_presaleAllocations, tokenId);
+        // Mark this `ticketNumber` as redeemed
+        BitMaps.set(_presaleAllocations, ticketNumber);
 
-        // Are we always minting `totalSupply()` below regardless?
-
-        // Is the tokenId is the index in the bitmap?
-
-        _mint(msg.sender, tokenId);
+        _mint(msg.sender, tokenIdToMint);
+        tokenIdToMint += 1;
     }
 
-    // args: tokenId?
+    /**
+     *
+     */
     function publicSale()
         external
+        payable
         atStage(Stages.PublicSale)
         isNotContract
         msgValueEqualsPRICE
+        totalSupplyCapNotExceeded
     {
-        // _mint(msg.sender, tokenId);
+        _mint(msg.sender, tokenIdToMint);
+        tokenIdToMint += 1;
     }
 
     function transferMultiple() external {

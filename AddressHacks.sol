@@ -10,7 +10,7 @@ interface ITarget {
 
 /**
  * `TargetOne` contract demonstrates how extcodesize/address.code.length checks
- * may be bypassed when called from within a constructor.
+ * can be bypassed when called from within a constructor.
  */
 contract TargetOne {
     using Address for address;
